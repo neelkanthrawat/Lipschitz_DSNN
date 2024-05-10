@@ -4,11 +4,11 @@ import torch.nn.functional as F
 from torch import Tensor
 from abc import ABC, abstractproperty, abstractmethod
 
-
+### function for SplineProj
 def slope_clipping(cs, T):
     device = cs.device
     n = cs.shape[1]
-    new_slopes = torch.clamp(cs[:,1:] - cs[:,:-1], -T, T)
+    new_slopes = torch.clamp(cs[:,1:] - cs[:,:-1], -T, T)### this is the operation clipping_{T} (D c) (eqn 12 and 13)
     new_cs = torch.zeros(cs.shape, device=device)
     new_cs[:,1:] = torch.cumsum(new_slopes, dim=1)
     new_cs = new_cs + torch.mean(cs - new_cs, dim=1).unsqueeze(1)
@@ -130,7 +130,7 @@ class LinearSpline(ABC, nn.Module):
         self.grid = torch.Tensor([grid])
 
         self.init_zero_knot_indexes()
-        self.D2_filter = Tensor([1, -2, 1]).view(1, 1, 3).div(self.grid)
+        self.D2_filter = Tensor([1, -2, 1]).view(1, 1, 3).div(self.grid)### why did they divide by grid?
         self.lipschitz_constrained = lipschitz_constrained
 
         # tensor with locations of spline coefficients
@@ -170,6 +170,9 @@ class LinearSpline(ABC, nn.Module):
         """ Get the activation relu slopes {a_k},
         by doing a valid convolution of the coefficients {c_k}
         with the second-order finite-difference filter [1,-2,1].
+
+        ref: check equation number 35 of appendix B of the paper:
+            "Learning Activation Functions in Deep (Spline) Neural Networks" by Bohra et. al.
         """
         D2_filter = self.D2_filter.to(device=self.coefficients.device)
 
@@ -211,7 +214,7 @@ class LinearSpline(ABC, nn.Module):
 
     def forward(self, input):
         """
-        Args:
+        Args:                                                                                                                                                                                                                            
             input (torch.Tensor):
                 2D or 4D, depending on weather the layer is
                 convolutional ('conv') or fully-connected ('fc')
@@ -224,10 +227,12 @@ class LinearSpline(ABC, nn.Module):
         assert x.size(1) == self.num_activations, \
             'Wrong shape of input: {} != {}.'.format(x.size(1), self.num_activations)
 
-        grid = self.grid.to(self.coefficients_vect.device)
+
+        ## transfering the grid tensor and then zero_knot_tensors to the same device as coefficients_vect
+        grid = self.grid.to(self.coefficients_vect.device) 
         zero_knot_indexes = self.zero_knot_indexes.to(grid.device)
 
-        x = x.mul(self.scaling_coeffs_vect)
+        x = x.mul(self.scaling_coeffs_vect)### refer to equation (14) in the paper (section 3.3.2 Scaling Parameter)
 
         if self.lipschitz_constrained:
             output = LinearSpline_Func.apply(x, self.lipschitz_coefficients_vect, grid, zero_knot_indexes, \
@@ -237,7 +242,7 @@ class LinearSpline(ABC, nn.Module):
             output = LinearSpline_Func.apply(x, self.coefficients_vect, grid, zero_knot_indexes, \
                                         self.size, self.even)
 
-        output = output.div(self.scaling_coeffs_vect)
+        output = output.div(self.scaling_coeffs_vect) ### refer to equation (14) in the paper (section 3.3.2 Scaling Parameter) 
         output = self.reshape_back(output, input_size)
 
         return output
