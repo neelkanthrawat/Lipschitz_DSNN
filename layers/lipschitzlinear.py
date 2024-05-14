@@ -17,4 +17,7 @@ class LipschitzLinear(Linear):
         
     def forward(self, x):
         lipschitz_weight = self.projection(self.weight, self.lipschitz)
-        return F.linear(x, lipschitz_weight, self.bias)
+        # print("debugging, lipschitz_weight's dtype is:", lipschitz_weight.dtype)
+        # print("debugging, self.bias's dtype is:", self.bias.dtype)
+        # print("debigging, x.dtype:",x.dtype)
+        return F.linear(x.float(), lipschitz_weight, self.bias)
