@@ -1,2 +1,4 @@
 *.pyc
 german_pluralform.ipynb
+*-ubyte
+*-ubyte.gz
