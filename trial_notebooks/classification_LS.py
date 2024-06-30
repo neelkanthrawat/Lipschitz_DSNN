@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 from architectures.base_model import BaseModel
 from layers.lipschitzlinear import LipschitzLinear
-from projections.fc_projections import identity, bjorck_orthonormalize_fc
+from projections.fc_projections import identity, bjorck_orthonormalize_fc, layerwise_orthogonal_fc
 
 
 class SimpleFCClassification(BaseModel):
@@ -28,6 +28,12 @@ class SimpleFCClassification(BaseModel):
                     return bjorck_orthonormalize_fc(weights, lipschitz_goal,
                                                     beta=0.5, iters=network_parameters['bjorck_iter'])
                 projection = proj
+            elif 'LOT' in network_parameters:
+                print("LOT orthonormalization will take place")
+                def proj_2(weights, lipschitz_goal):
+                    return layerwise_orthogonal_fc(weights,lipschitz_goal, 
+                                                beta = 0.5, iters = network_parameters['LOT']['LOT_iter'])
+                projection = proj_2
             else:
                 projection = bjorck_orthonormalize_fc
         else:
@@ -37,7 +43,7 @@ class SimpleFCClassification(BaseModel):
 
 
         for i in range(len(layer_sizes)-2):
-            modules.append(LipschitzLinear(1, projection, layer_sizes[i], layer_sizes[i+1]))
+            modules.append(LipschitzLinear(1, projection, layer_sizes[i], layer_sizes[i+1]))# 1 corresponds to lipschitz constant 1
             modules.append(self.init_activation(('fc', layer_sizes[i+1])))
 
 
