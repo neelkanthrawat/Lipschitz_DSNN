@@ -27,6 +27,6 @@ def bjorck_orthonormalize_fc(weights, lipschitz_goal, beta=0.5, iters=15):
     for _ in range(iters):
         w_t_w = w.t().mm(w)
         w = (1 + beta) * w - beta * w.mm(w_t_w)
-    new_weights = lipschitz_goal * w
+    new_weights = lipschitz_goal * w  
 
-    return w
+    return w # why are we not returning new_weights? it does not make any sense to me!
