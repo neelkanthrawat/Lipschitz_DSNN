@@ -11,7 +11,7 @@ from projections.fc_projections import identity, bjorck_orthonormalize_fc, layer
 
 
 class SimpleFCClassification(BaseModel):
-    """simple architecture for a fully-connected network"""
+    """simple architecture for a fully-connected network based classifier"""
     def __init__(self, network_parameters, **params):
         
         super().__init__(**params)
