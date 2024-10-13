@@ -42,24 +42,35 @@ def plot_confusion_matrix(predicted_labels, true_labels, classes):
     plt.show()
 
     ### code to plot the results of training (like epoch losses and accuracy)
-def plot_losses_trained_model(trainer):
-    
-    # Plotting losses
+def plot_losses_trained_model(trainer, want_logscale=False):
+    # Extracting losses and accuracies
     train_loss = trainer.avg_train_loss_epoch
     val_loss = trainer.avg_val_loss_epoch
-    plt.plot(train_loss, "o-", label="train_loss")
-    plt.plot(val_loss, ">:", label="val_loss")
-    plt.legend()
+    train_acc = trainer.train_acc_epoch
+    val_acc = trainer.val_acc_epoch
+    
+    # Creating a 1x2 subplot
+    fig, axs = plt.subplots(1, 2, figsize=(11, 4))
+    
+    # Plotting losses
+    axs[0].plot(train_loss, "o-", label="Train Loss")
+    axs[0].plot(val_loss, ">:", label="Validation Loss")
+    if want_logscale:
+        axs[0].set_yscale("log")
+    axs[0].set_title('Losses')
+    axs[0].legend()
+    
+    # Plotting accuracies
+    axs[1].plot(train_acc, "o-", label="Train Accuracy")
+    axs[1].plot(val_acc, ">:", label="Validation Accuracy")
+    if want_logscale:
+        axs[1].set_yscale("log")
+    axs[1].set_title('Accuracies')
+    axs[1].legend()
+    
+    # Display the plots
     plt.show()
-
-    # Plotting train and validation accuracy
-    train_acc, val_acc = trainer.train_acc_epoch, trainer.val_acc_epoch
-    plt.plot(train_acc, "o-", label="train_accuracy")
-    plt.plot(val_acc, ">:", label="val_accuracy")
-    plt.yscale("log")
-    plt.legend()
-    plt.show()
-
+    
     # Printing the final training and validation accuracy
     print(f"Final training accuracy is: {train_acc[-1]:0.3f}")
     print(f"Final validation accuracy is: {val_acc[-1]:0.3f}")
