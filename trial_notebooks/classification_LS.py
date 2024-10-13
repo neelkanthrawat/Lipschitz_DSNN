@@ -24,6 +24,7 @@ class SimpleFCClassification(BaseModel):
         elif network_parameters['projection'] == 'orthonormalize':
             print("Orthonormalisation will take place.")
             if 'bjorck_iter' in network_parameters:
+                print("Bjoerck and Bowie orthonormalisation will take place")
                 def proj(weights, lipschitz_goal):
                     return bjorck_orthonormalize_fc(weights, lipschitz_goal,
                                                     beta=0.5, iters=network_parameters['bjorck_iter'])
@@ -35,6 +36,7 @@ class SimpleFCClassification(BaseModel):
                                                 beta = 0.5, iters = network_parameters['LOT']['LOT_iter'])
                 projection = proj_2
             else:
+                print("Bjorck and Bowie orthonormalisation will take place")
                 projection = bjorck_orthonormalize_fc
         else:
             raise ValueError('Projection type is not valid')
