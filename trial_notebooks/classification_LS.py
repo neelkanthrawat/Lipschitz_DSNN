@@ -9,12 +9,12 @@ from architectures.base_model import BaseModel
 from layers.lipschitzlinear import LipschitzLinear
 from projections.fc_projections import identity, bjorck_orthonormalize_fc, layerwise_orthogonal_fc
 
-
+# LIP_GOAL=10
 class SimpleFCClassification(BaseModel):
     """simple architecture for a fully-connected network based classifier"""
-    def __init__(self, network_parameters, **params):
+    def __init__(self, network_parameters,lip_goal=1, **params):
         
-        super().__init__(**params)
+        super().__init__(**params) 
 
         modules = nn.ModuleList()
 
@@ -45,7 +45,7 @@ class SimpleFCClassification(BaseModel):
 
 
         for i in range(len(layer_sizes)-2):
-            modules.append(LipschitzLinear(1, projection, layer_sizes[i], layer_sizes[i+1]))# 1 corresponds to lipschitz constant 1
+            modules.append(LipschitzLinear(lip_goal, projection, layer_sizes[i], layer_sizes[i+1]))# 1 corresponds to lipschitz constant 1
             modules.append(self.init_activation(('fc', layer_sizes[i+1])))
 
 
