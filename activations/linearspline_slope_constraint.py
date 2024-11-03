@@ -137,7 +137,7 @@ class LinearSpline_Func(torch.autograd.Function):
 
         return grad_x, grad_coefficients_vect, None, None, None, None
 
-class LinearSpline(ABC, nn.Module): ### changes mainly here!
+class LinearSplineSlopeConstrained(ABC, nn.Module): ### changes mainly here!
     """
     Class for LinearSpline activation functions
 
