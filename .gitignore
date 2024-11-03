@@ -2,3 +2,6 @@
 german_pluralform.ipynb
 *-ubyte
 *-ubyte.gz
+testing_lip_constrained_variational_ae.ipynb
+testing_lipschitz_constrainted_generative_models.ipynb
+code_test.ipynb
