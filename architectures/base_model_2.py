@@ -9,7 +9,7 @@ import numpy as np
 import torch.nn as nn
 from torch import Tensor
 from activations.linearspline import LinearSpline
-from activations.linearspline_slope_constraint import LinearSplineSlopeConstrained as lssc
+from activations.linearspline_slope_constraint import LinearSplineSlopeConstrained
 from activations.groupsort import GroupSort
 from activations.householder import HouseHolder
 from activations.basic_activations import AbsoluteValue, LipschitzPReLU
@@ -36,7 +36,7 @@ class BaseModel(nn.Module):
 
         # general attributes
         self.activation_type = activation_type
-
+        
         # linearspline attributes
         self.spline_init = spline_init
         self.spline_size = spline_size
@@ -53,7 +53,7 @@ class BaseModel(nn.Module):
 
         self.linearspline = None
         if self.activation_type == 'linearspline_slope_constrained':
-            self.linearspline = lssc
+            self.linearspline = LinearSplineSlopeConstrained
             
 
     def init_activation_list(self, activation_specs, **kwargs):
@@ -73,7 +73,7 @@ class BaseModel(nn.Module):
         if self.using_splines:
             activations = nn.ModuleList()
             for mode, num_activations in activation_specs:
-                activations.append(self.lssc(mode=mode,
+                activations.append(self.linearspline(mode=mode,
                                     num_activations=num_activations,
                                     size=self.spline_size,
                                     range_=self.spline_range,
