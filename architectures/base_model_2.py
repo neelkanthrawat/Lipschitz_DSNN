@@ -80,7 +80,7 @@ class BaseModel(nn.Module):
                                     init=self.spline_init,
                                     smin = self.slope_min,
                                     smax = self.slope_max,
-                                    lipschitz_constrained=self.slope_constrained,
+                                    slope_constrained=self.slope_constrained,
                                     ))
 
         else:
@@ -102,7 +102,6 @@ class BaseModel(nn.Module):
         assert isinstance(activation_specs, tuple), \
             f'activation_specs type: {type(activation_specs)}'
         activation = self.init_activation_list([activation_specs], **kwargs)[0]
-
         return activation
     
 
