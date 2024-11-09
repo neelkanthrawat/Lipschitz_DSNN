@@ -19,10 +19,6 @@ def project_slopes_vectorized(nodal_values, knot_positions, smin, smax):
     Returns:
     - new_nodal_values: Tensor of adjusted nodal values after slope projection.
     """
-    print("project slope vector invoked")
-
-    print(f"Nodal values shape is: {nodal_values.shape}")
-    print(f"Knot positions shape is: {knot_positions.shape}")
 
     # Number of nodal values (assuming nodal_values is 2D)
     N = nodal_values.size(1)  # Change to size(1) if it's a 1D tensor
@@ -38,11 +34,8 @@ def project_slopes_vectorized(nodal_values, knot_positions, smin, smax):
     # Handle s1 = s2 condition
     slopes[:, 0] = slopes[:, 1]  # Use the first computed slope
 
-    print("slopes are:"); print(slopes)
-
     # Clip the slopes to the range [smin, smax]
     clipped_slopes = torch.clamp(slopes, smin, smax)
-    print("clipped slopes are:"); print(clipped_slopes)
 
     # Calculate new nodal values
     new_nodal_values = torch.zeros_like(nodal_values)
@@ -55,37 +48,35 @@ def project_slopes_vectorized(nodal_values, knot_positions, smin, smax):
     # Adjust to preserve the mean
     mean_adjustment = torch.mean(nodal_values) - torch.mean(new_nodal_values)
     new_nodal_values += mean_adjustment
-    print(f"shape of the new nodal values is:"); print(new_nodal_values.shape)
 
     return new_nodal_values
 
 
 ### COMMENT: I DONT THINK WE NEED GRID AND SIZE AS AN ARGUMENT IN THIS FN 
 # AS WE ARE NOT USING THEM ANYWHHERE 
-def initialize_coeffs(init, grid_tensor, grid, size):
+def initialize_coeffs(init, nodal_val_loc_tensor, grid, size):
         """The coefficients are initialized with the value of the activation
         # at each knot (c[k] = f[k], since B1 splines are interpolators)."""
         
         if init == 'identity':
-            coefficients = grid_tensor
+            coefficients = nodal_val_loc_tensor
         elif init == 'zero':
-            coefficients = torch.zeros(grid_tensor.shape)
+            coefficients = torch.zeros(nodal_val_loc_tensor.shape)
         elif init == 'relu':
-            coefficients = F.relu(grid_tensor)
+            coefficients = F.relu(nodal_val_loc_tensor)
         elif init == 'absolute_value':
-            coefficients = torch.abs(grid_tensor)
+            coefficients = torch.abs(nodal_val_loc_tensor)
             
         elif init == 'maxmin':
             # initalize half of the activations with the absolute and the other half with the 
             # identity. This is similar to maxmin because max(x1, x2) = (x1 + x2)/2 + |x1 - x2|/2 
             # and min(x1, x2) = (x1 + x2)/2 - |x1 - x2|/2
-            coefficients = torch.zeros(grid_tensor.shape)
-            coefficients[::2, :] = (grid_tensor[::2, :]).abs()
-            coefficients[1::2, :] = grid_tensor[1::2, :]
+            coefficients = torch.zeros(nodal_val_loc_tensor.shape)
+            coefficients[::2, :] = 2* (nodal_val_loc_tensor[::2, :]).abs()
+            coefficients[1::2, :] = 3* nodal_val_loc_tensor[1::2, :]
         
         else:
             raise ValueError('init should be in [identity, relu, absolute_value, maxmin, max_tv].')
-        
         return coefficients
 
 ## TO INCORPORATE NON-UNIFORM CASE, WE WOULD HAVE TO MAKE SOME CHANGES HERE AS WELL!
@@ -96,59 +87,67 @@ class LinearSpline_Func(torch.autograd.Function):
     input.
     """
     @staticmethod
-    def forward(ctx, x, coefficients_vect, grid_tensor, zero_knot_indexes, size, even):
-        # Clamping x to be within the range of the grid
-        print(f"+++ SHAPE OF GRID TENSOR IS: {grid_tensor.shape}")
-        print(f" grid tensor is:"); print(grid_tensor)
-        print(f" ||| shape of x is: {x.shape}")
-        print(f" x is:"); print(x)
-        print(f" shape of zero k")
-        x_clamped = x.clamp(min=grid_tensor.min(), max=grid_tensor.max())
-        print(f"*******-----shape of grid tensor is: {grid_tensor.shape}")
-        print(f" ***** SHAPE OF tensor x_clamped is: {x_clamped.shape}")
-        print(f"djfbos x_clamped view -1: {x_clamped.view(-1).shape}")
-        old_shape_x_clamped = x_clamped.shape
+    def forward(ctx, x, coefficients_vect, nodal_val_loc_tensor, zero_knot_indexes, size, even):
+        # print("_"*10)
+        # print("x is:"); print(x.squeeze(-1).squeeze(-1).transpose(0,1))
+        # print("nodal value location tensor is:"); print(nodal_val_loc_tensor)
         
+        ### Step 1: Find the index of the left and right term's posn/nodal point location
+        nodal_val_loc_tensor = nodal_val_loc_tensor.contiguous()
+        x_sq_and_transpose = x.squeeze(-1).squeeze(-1).transpose(0, 1).contiguous()# squeezed and transposed
+        left_indices = torch.searchsorted(nodal_val_loc_tensor, x_sq_and_transpose)-1#Shape:[num_activ, batch_size]
+        # clipping left indices (worked out in notes)
+        left_indices = torch.clamp(left_indices, min=0, max =size-2)#shape:(num_activ,batch_size)
+        # print("left indices are:"); print(left_indices)
+        
+        ### Step 2: calcuating fractions/left and right basis
+        num_activations, _ = left_indices.shape
+        activation_indices = torch.arange(num_activations).unsqueeze(1)  # Shape: [num_activations, 1]
+        # calculating left and right nodal points (t_j, t_{j+1})
+        left_values =nodal_val_loc_tensor[activation_indices, left_indices]# Shape: [num_activations, batch_size]
+        right_values = nodal_val_loc_tensor[activation_indices, left_indices+1]# Shape: [num_activations, batch_size]
+        # print("left  nodal points are:"); print(left_values)
+        # print("right nodal points are:"); print(right_values)
+        # Calculate the left basis
+        left_basis = (x_sq_and_transpose - left_values) / (right_values - left_values)
+        # print("left basis is:"); print(left_basis)
+        # right basis =  1-left_basis 
+        # indices for coefficient vector:
+        index_coeffs = left_indices + zero_knot_indexes.unsqueeze(1)
+        # print(f"coefficient vector is:"); print(coefficients_vect)
 
-        # Finding left_index which represents the index of the left grid point
-        left_index = torch.searchsorted(grid_tensor, x_clamped.squeeze(), right=False) - 1
-        print(f"left index are: {left_index}")
-        # Explicitly handle negative left_index values by ensuring they start from 0
-        left_index = left_index.where(left_index >= 0, torch.tensor(0, device=x.device))
-        print(f"left index now are: {left_index}")
-        # Calculate fracs based on non-uniform intervals
-        fracs = (x_clamped - grid_tensor[left_index]) / (grid_tensor[left_index + 1] - grid_tensor[left_index])
-        print(f" fracs are: {fracs}")
-        # Now calculate indexes for the coefficients
-        # This gives the indexes (in coefficients_vect) of the left coefficients
-        indexes = (zero_knot_indexes.view(1, -1, 1, 1) + left_index).long()
-
-        # Now compute the activation output using the two coefficients
-        activation_output = coefficients_vect[indexes + 1] * fracs + \
-            coefficients_vect[indexes] * (1 - fracs)
-
-        if even: # I am not fully sure about this yet!
-            activation_output = activation_output + (grid_tensor.max() - grid_tensor.min()) / 2  # Adjust if needed for even grid
-
-        ctx.save_for_backward(fracs, coefficients_vect, indexes, grid_tensor)
+        # left coefficient, right coefficient
+        # print(f"coefficients_vect[left_indices]:"); print(coefficients_vect[index_coeffs])
+        # print(f"coefficients_vect[right_indices]"); print(coefficients_vect[index_coeffs+1])
+        
+        ### Step 3: Compute activation output with 2 coefficients and corresponding basis
+        activation_output = coefficients_vect[index_coeffs] * left_basis + \
+                            coefficients_vect[index_coeffs+1] * (1-left_basis)
+        # reshape the output:
+        activation_output = activation_output.view(x.shape)
+        
+        ### Step 4: save for backward propagation
+        ctx.save_for_backward(left_basis, coefficients_vect, index_coeffs, nodal_val_loc_tensor)
+        # ctx.save_for_backward(fracs, coefficients_vect, indexes, nodal_val_loc_tensor)
         return activation_output
 
     @staticmethod
     def backward(ctx, grad_out):
-        fracs, coefficients_vect, indexes, grid_tensor = ctx.saved_tensors
-
+        # Need to discuss and confirm this with prof!
+        fracs, coefficients_vect, indexes, nodal_val_loc_tensor = ctx.saved_tensors
+        # note: fracs is left basis
         # Calculate the gradients with respect to x
         # grad_x represents the slope between the two coefficients
-        grad_x = (coefficients_vect[indexes + 1] - coefficients_vect[indexes]) / (grid_tensor[indexes + 1] - grid_tensor[indexes]) * grad_out
+        grad_x = (coefficients_vect[indexes + 1] - coefficients_vect[indexes]) / (nodal_val_loc_tensor[indexes + 1] - nodal_val_loc_tensor[indexes]) * grad_out
 
         # Next, add the gradients with respect to each coefficient
         grad_coefficients_vect = torch.zeros_like(coefficients_vect)
         
-        # Right coefficients gradients
+        # left coefficients gradients
         grad_coefficients_vect.scatter_add_(0,
                                             indexes.view(-1) + 1,
                                             (fracs * grad_out).view(-1))
-        # Left coefficients gradients
+        # right coefficients gradients
         grad_coefficients_vect.scatter_add_(0, indexes.view(-1),
                                             ((1 - fracs) * grad_out).view(-1))
 
@@ -161,16 +160,17 @@ class LinearSplineSlopeConstrained(ABC, nn.Module): ### changes mainly here!
     Args:
         mode (str): 'conv' (convolutional) or 'fc' (fully-connected).
         num_activations (int) : number of activation functions
-        size (int): number of coefficients of spline grid; the number of knots K = size - 2.
+        size (int): number of nodal values, f, in the spline grid; the number of knots K = size - 2.
         range_ (float) : positive range of the B-spline expansion. B-splines range = [-range_, range_].
         init (str): Function to initialize activations as (e.g. 'relu', 'identity', 'absolute_value').
         smin (float): minimum bound on the slope
         smax (float): maximum bound on the slope
-        lipschitz_constrained (bool): Constrain the activation to be 1-Lipschitz
+        ### I will change the name of the next variable for sure.
+        slope_constrained (bool): Constrain the activation to be 1-slope
     """
 
     def __init__(self, mode, num_activations, size, range_, init,smin, smax,
-                lipschitz_constrained, grid_values =None,
+                slope_constrained, grid_values =None,
                 uniform_grid = False, **kwargs):
 
         if mode not in ['conv', 'fc']:
@@ -181,76 +181,59 @@ class LinearSplineSlopeConstrained(ABC, nn.Module): ### changes mainly here!
 
         super().__init__()
 
-        # Initialize the grid_tensor based on uniform_grid and grid_values
+        # Initialize the nodal_val_loc_tensor based on uniform_grid and grid_values
         if uniform_grid:
             # Generate a uniform grid
-            self.grid_tensor = torch.linspace(-range_, range_, size).expand((num_activations, size))
+            self.nodal_val_loc_tensor = torch.linspace(-range_, range_, size).expand((num_activations, size))
             self.grid = torch.Tensor([2 * range_ / (size - 1)])  # uniform spacing for D2_filter
         else:
             if grid_values is not None:
                 # Use provided grid_values, ensuring correct length
                 assert len(grid_values) == size, "grid_values length must match size"
-                self.grid_tensor = torch.tensor(grid_values).expand((num_activations, size))
+                self.nodal_val_loc_tensor = torch.tensor(grid_values).expand((num_activations, size))
             else:
                 # Generate a non-uniform grid by sampling random points within the range
                 random_grid = torch.rand(size) * (2 * range_) - range_  # Values within [-range_, range_]
                 random_grid, _ = torch.sort(random_grid)  # Sort to ensure monotonicity
-                self.grid_tensor = random_grid.expand((num_activations, size))
+                self.nodal_val_loc_tensor = random_grid.expand((num_activations, size))
 
             # Calculate differences for both provided and random non-uniform grids
-            self.grid = self.grid_tensor[:, 1:] - self.grid_tensor[:, :-1]
-
+            ### imma keep the name grid for now, but later, I will change it to diff_nodal_val_loc
+            self.grid = self.nodal_val_loc_tensor[:, 1:] - self.nodal_val_loc_tensor[:, :-1]
 
         self.mode = mode
         self.size = int(size)
         self.even = self.size % 2 == 0
         self.num_activations = int(num_activations)
-        # print(f" Number of activation functions: {self.num_activations}")
         self.init = init
         self.range_ = float(range_)
         self.smin = smin
         self.smax = smax
-        # grid = 2 * self.range_ / (self.size-1) # defined earlier 
-        # self.grid = torch.Tensor([grid]) # define earlier 
         self.init_zero_knot_indexes()
-        # self.D2_filter = Tensor([1, -2, 1]).view(1, 1, 3).div(self.grid)### defined below
-        self.lipschitz_constrained = lipschitz_constrained # do we need it this time?
-        
-        ### D2 filters 
-        # Filter for computing (earlier) relu_slopes  function (2nd-order finite differences) UPDATE (changed name to slope_difference)
-        ### update: I don't think we will be using this anywhere anymore now. let's see
-        ### I DON'T THINK WE NEED THIS ANYMORE!
-        # if uniform_grid:
-        #     # Use uniform spacing
-        #     self.D2_filter = Tensor([1, -2, 1]).view(1, 1, 3).div(self.grid)  # Using the uniform grid spacing
-        # else:
-        #     # Use differences for the non-uniform grid
-        #     self.D2_filter = Tensor([1, -2, 1]).view(1, 1, 3).div(self.grid_tensor[:, 1:] - self.grid_tensor[:, :-1])
+        self.slope_constrained = slope_constrained # do we need it this time?
 
-        ### tensor with locations of spline coefficients
-        #we have already done this above in uniform condition of if-else statement
-        #self.grid_tensor = torch.linspace(-self.range_, self.range_, self.size).expand((self.num_activations, self.size))
-
-        ### INITIALISE SPLINE COEFFICIENTS
+        ### INITIALISE SPLINE COEFFICIENTS (NODAL VALUES, fn)
         # (maybe we might need to make some changes in the initialize_coeffs function as well. we will see)
-        coefficients = initialize_coeffs(init, self.grid_tensor, self.grid, self.size)  # spline coefficients
+        coefficients = initialize_coeffs(init, self.nodal_val_loc_tensor, self.grid, self.size)  # spline coefficients
         # Need to vectorize coefficients to perform specific operations
         # size: (num_activations*size)
         self.coefficients_vect = nn.Parameter(coefficients.contiguous().view(-1))
         self.scaling_coeffs_vect = nn.Parameter(torch.ones((1, self.num_activations, 1, 1)))
-        # print(f"self.coefficient_vect shape is: {self.coefficients_vect.shape}")
+        # print(f" self.grid is:"); print(self.grid)
+        # print(f"self.coefficient_vect shape is (before defining coeff_reshaped): {self.coefficients_vect.shape}")
+        print("coefficients are:")
+        print(coefficients)
         ### SLOPES
         # Reshape the coefficients vector back into a 2D tensor for calculations
         coefficients_reshaped = self.coefficients_vect.view(self.num_activations, self.size)
-        # Define slopes based on the reshaped coefficients and grid_tensor
+        
+        # Define slopes based on the reshaped coefficients and nodal_val_loc_tensor
         delta_f = coefficients_reshaped[:, 1:] - coefficients_reshaped[:, :-1]
-        delta_t = self.grid_tensor[:, 1:] - self.grid_tensor[:, :-1]
+        delta_t = self.nodal_val_loc_tensor[:, 1:] - self.nodal_val_loc_tensor[:, :-1]
         slopes = torch.zeros((self.num_activations, self.size), device=self.coefficients_vect.device)
         # Calculate slopes using the finite-difference formula, ensuring the boundary condition s1 = s2
         slopes[:, 1:] = delta_f / delta_t
         slopes[:, 0] = slopes[:, 1]  # Boundary condition (s1 = s2)
-        print("slopes are (outside):")
-        print(slopes)
         # Store slopes as a member of the class
         self.slopes = slopes  # Tensor of initial slopes
 
@@ -261,7 +244,7 @@ class LinearSplineSlopeConstrained(ABC, nn.Module): ### changes mainly here!
         # self.zero_knot_indexes[i] gives index of knot 0 for filter/neuron_i.
         # size: (num_activations,)
         activation_arange = torch.arange(0, self.num_activations)
-        self.zero_knot_indexes = (activation_arange * self.size + (self.size // 2))
+        self.zero_knot_indexes = (activation_arange * self.size)
 
     @property
     def coefficients(self):
@@ -269,15 +252,16 @@ class LinearSplineSlopeConstrained(ABC, nn.Module): ### changes mainly here!
         return self.coefficients_vect.view(self.num_activations, self.size)
     
     @property
-    def lipschitz_coefficients(self): # UPDATE: I HAVE TO CHANGE ITS NAME TO SOMETHING ELSE, LEAVING IT LIPSCHITZ_COEFFICIENTS FOR THE TIME BEING
-        """Projection of B-spline coefficients such that the slope is constrained"""
-        # return slope_clipping(self.coefficients, self.grid.item())
-        return project_slopes_vectorized(nodal_values=self.coefficients, knot_positions=self.grid_tensor, smin = self.smin, smax = self.smax)
+    def slope_constrained_coefficients(self): # UPDATE: I HAVE TO CHANGE ITS NAME TO SOMETHING ELSE, LEAVING IT slope_constrained_coefficients FOR THE TIME BEING
+        """Projection such that the slope is constrained in the range [smin, smax]"""
+        return project_slopes_vectorized(nodal_values=self.coefficients, 
+                                        knot_positions=self.nodal_val_loc_tensor, 
+                                        smin = self.smin, smax = self.smax)
     
     @property
-    def lipschitz_coefficients_vect(self):
-        """Projection of B-spline coefficients such that they are 1-Lipschitz"""
-        return self.lipschitz_coefficients.contiguous().view(-1)
+    def slope_constrained_coefficients_vect(self):
+        """Projection s.t slope of f_spline is constrained in the range [smin, smax]"""
+        return self.slope_constrained_coefficients.contiguous().view(-1)
 
     @property
     def slope_difference(self): ### THIS WILL CHANGE FOR SURE!
@@ -337,17 +321,17 @@ class LinearSplineSlopeConstrained(ABC, nn.Module): ### changes mainly here!
 
         ## transfering the grid tensor and then zero_knot_tensors to the same device as coefficients_vect
         # grid = self.grid.to(self.coefficients_vect.device) 
-        grid_tensor = self.grid_tensor.to(self.coefficients_vect.device)
-        zero_knot_indexes = self.zero_knot_indexes.to(grid_tensor.device)
+        nodal_val_loc_tensor = self.nodal_val_loc_tensor.to(self.coefficients_vect.device)
+        zero_knot_indexes = self.zero_knot_indexes.to(nodal_val_loc_tensor.device)
 
         x = x.mul(self.scaling_coeffs_vect)### refer to equation (14) in the paper (section 3.3.2 Scaling Parameter)
 
-        if self.lipschitz_constrained: ### THIS I NEED TO LOOK INTO! IM NOT ENTIRELY SURE ABOUT THIS!
-            output = LinearSpline_Func.apply(x, self.lipschitz_coefficients_vect, grid_tensor, zero_knot_indexes, \
+        if self.slope_constrained: ### THIS I NEED TO LOOK INTO! IM NOT ENTIRELY SURE ABOUT THIS!
+            output = LinearSpline_Func.apply(x, self.slope_constrained_coefficients_vect, nodal_val_loc_tensor, zero_knot_indexes, \
                                         self.size, self.even)
 
         else:
-            output = LinearSpline_Func.apply(x, self.coefficients_vect, grid_tensor, zero_knot_indexes, \
+            output = LinearSpline_Func.apply(x, self.coefficients_vect, nodal_val_loc_tensor, zero_knot_indexes, \
                                         self.size, self.even)
 
         output = output.div(self.scaling_coeffs_vect) ### refer to equation (14) in the paper (section 3.3.2 Scaling Parameter) 
@@ -359,8 +343,8 @@ class LinearSplineSlopeConstrained(ABC, nn.Module): ### changes mainly here!
     #     """ Custom repr for print(model)."""
     #     s = ('mode={mode}, num_activations={num_activations}, '
     #         'init={init}, size={size}, '
-    #         'grid_min={self.grid_tensor}, grid_max={self.grid_tensor}, '
-    #         'lipschitz_constrained={lipschitz_constrained}, '
+    #         'grid_min={self.nodal_val_loc_tensor}, grid_max={self.nodal_val_loc_tensor}, '
+    #         'slope_constrained={slope_constrained}, '
     #         'coefficients_vect_shape={self.coefficients_vect.shape}, '
     #         'slopes_mean={slopes.mean():.3f}, slopes_std={slopes.std():.3f}.')
     #     return s.format(**self.__dict__)
@@ -369,7 +353,7 @@ class LinearSplineSlopeConstrained(ABC, nn.Module): ### changes mainly here!
 
         s = ('mode={mode}, num_activations={num_activations}, '
              'init={init}, size={size}, grid={grid}, '
-             'lipschitz_constrained={lipschitz_constrained}.'
+             'slope_constrained={slope_constrained}.'
              )
 
         return s.format(**self.__dict__)
