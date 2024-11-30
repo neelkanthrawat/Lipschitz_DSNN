@@ -89,7 +89,8 @@ class LinearSpline_Func(torch.autograd.Function):
     @staticmethod
     def forward(ctx, x, coefficients_vect, nodal_val_loc_tensor, zero_knot_indexes, size, even):
         # print("_"*10)
-        # print("x is:"); print(x.squeeze(-1).squeeze(-1).transpose(0,1))
+        # print("x is:"); print(x)
+        # print("x squeezed and transposed is:"); print(x.squeeze(-1).squeeze(-1).transpose(0,1))
         # print("nodal value location tensor is:"); print(nodal_val_loc_tensor)
         
         ### Step 1: Find the index of the left and right term's posn/nodal point location
@@ -123,9 +124,10 @@ class LinearSpline_Func(torch.autograd.Function):
         ### Step 3: Compute activation output with 2 coefficients and corresponding basis
         activation_output = coefficients_vect[index_coeffs] * left_basis + \
                             coefficients_vect[index_coeffs+1] * (1-left_basis)
+        # print("activation output (before reshaping is):"); print(activation_output)
         # reshape the output:
-        activation_output = activation_output.view(x.shape)
-        
+        activation_output = activation_output.transpose(0,1).view(x.shape)
+        # print("activation output (after reshaping) is:"); print(activation_output)
         ### Step 4: save for backward propagation
         ctx.save_for_backward(left_basis, coefficients_vect, index_coeffs, nodal_val_loc_tensor)
         # ctx.save_for_backward(fracs, coefficients_vect, indexes, nodal_val_loc_tensor)
@@ -221,8 +223,8 @@ class LinearSplineSlopeConstrained(ABC, nn.Module): ### changes mainly here!
         self.scaling_coeffs_vect = nn.Parameter(torch.ones((1, self.num_activations, 1, 1)))
         # print(f" self.grid is:"); print(self.grid)
         # print(f"self.coefficient_vect shape is (before defining coeff_reshaped): {self.coefficients_vect.shape}")
-        print("coefficients are:")
-        print(coefficients)
+        # print("coefficients are:")
+        # print(coefficients)
         ### SLOPES
         # Reshape the coefficients vector back into a 2D tensor for calculations
         coefficients_reshaped = self.coefficients_vect.view(self.num_activations, self.size)
