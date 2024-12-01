@@ -110,7 +110,9 @@ class LinearSpline_Func(torch.autograd.Function):
         # print("left  nodal points are:"); print(left_values)
         # print("right nodal points are:"); print(right_values)
         # Calculate the left basis
-        left_basis = (x_sq_and_transpose - left_values) / (right_values - left_values)
+        # left_basis = (x_sq_and_transpose - left_values) / (right_values - left_values)
+        ### I THINK THE FOLLOWING WOULD BE THE CORRECT LEFT BASIS
+        left_basis = (right_values - x_sq_and_transpose)/ (right_values - left_values)
         # print("left basis is:"); print(left_basis)
         # right basis =  1-left_basis 
         # indices for coefficient vector:
@@ -121,6 +123,12 @@ class LinearSpline_Func(torch.autograd.Function):
         # print(f"coefficients_vect[left_indices]:"); print(coefficients_vect[index_coeffs])
         # print(f"coefficients_vect[right_indices]"); print(coefficients_vect[index_coeffs+1])
         
+        # checking some index error in backward function. I THINK I HAVE FIXED IT AS WELL
+        # print(f"____ forward function____")
+        # print("coefficient_vect forward is:"); print(coefficients_vect)
+        # print("index are:"); print(index_coeffs)
+        # print("coefficients_vect[index_coeffs+1]:"); print(coefficients_vect[index_coeffs+1])
+
         ### Step 3: Compute activation output with 2 coefficients and corresponding basis
         activation_output = coefficients_vect[index_coeffs] * left_basis + \
                             coefficients_vect[index_coeffs+1] * (1-left_basis)
@@ -129,19 +137,24 @@ class LinearSpline_Func(torch.autograd.Function):
         activation_output = activation_output.transpose(0,1).view(x.shape)
         # print("activation output (after reshaping) is:"); print(activation_output)
         ### Step 4: save for backward propagation
-        ctx.save_for_backward(left_basis, coefficients_vect, index_coeffs, nodal_val_loc_tensor)
+        ctx.save_for_backward(left_basis, coefficients_vect, index_coeffs, 
+                            nodal_val_loc_tensor,activation_indices,left_indices)# add 2 more things
         # ctx.save_for_backward(fracs, coefficients_vect, indexes, nodal_val_loc_tensor)
         return activation_output
 
     @staticmethod
     def backward(ctx, grad_out):
         # Need to discuss and confirm this with prof!
-        fracs, coefficients_vect, indexes, nodal_val_loc_tensor = ctx.saved_tensors
+        # ADDED "activation_indices" and "left_indices" in the code below
+        fracs, coefficients_vect, indexes, nodal_val_loc_tensor,activation_indices, left_indices = ctx.saved_tensors
         # note: fracs is left basis
         # Calculate the gradients with respect to x
         # grad_x represents the slope between the two coefficients
-        grad_x = (coefficients_vect[indexes + 1] - coefficients_vect[indexes]) / (nodal_val_loc_tensor[indexes + 1] - nodal_val_loc_tensor[indexes]) * grad_out
-
+        # print("coefficient vect is:"); print(coefficients_vect)
+        # print("indexes are:"); print(indexes)
+        # grad_x = (coefficients_vect[indexes + 1] - coefficients_vect[indexes]) / (nodal_val_loc_tensor[indexes + 1] - nodal_val_loc_tensor[indexes]) * grad_out
+        # HERE WE MADE CHANGES IN THE DENOMINATOR, I THINK NOW IT SHOULD NOT THROW ERROR
+        grad_x = (coefficients_vect[indexes + 1] - coefficients_vect[indexes]) / (nodal_val_loc_tensor[activation_indices, left_indices+1] - nodal_val_loc_tensor[activation_indices, left_indices]) * grad_out
         # Next, add the gradients with respect to each coefficient
         grad_coefficients_vect = torch.zeros_like(coefficients_vect)
         
