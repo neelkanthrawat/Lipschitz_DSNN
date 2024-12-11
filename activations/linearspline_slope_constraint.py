@@ -6,29 +6,29 @@ from abc import ABC, abstractproperty, abstractmethod
 
 
 ### Slope projection function (To enforce the slope constraint)
-def project_slopes_vectorized(nodal_values, knot_positions, smin, smax):
+def project_slopes_vectorized(fn_values, knot_positions, smin, smax):
     """
-    Project the slopes of a given set of nodal values with respect to non-uniform knot positions.
+    Project the slopes of a given set of fn (coefficient) values with respect to non-uniform knot positions.
 
     Parameters:
-    - nodal_values: Tensor of nodal values (f_n).
+    - fn_values: Tensor of coefficient values (f_n).
     - knot_positions: Tensor of corresponding knot positions (t_n).
     - smin: Minimum allowable slope.
     - smax: Maximum allowable slope.
 
     Returns:
-    - new_nodal_values: Tensor of adjusted nodal values after slope projection.
+    - new_fn_values: Tensor of adjusted nodal values after slope projection.
     """
 
     # Number of nodal values (assuming nodal_values is 2D)
-    N = nodal_values.size(1)  # Change to size(1) if it's a 1D tensor
+    N = fn_values.size(1)  # Change to size(1) if it's a 1D tensor
 
     # Calculate the differences in nodal values and knot positions
-    delta_f = nodal_values[:, 1:] - nodal_values[:, :-1]
+    delta_f = fn_values[:, 1:] - fn_values[:, :-1]
     delta_t = knot_positions[:, 1:] - knot_positions[:, :-1]
 
     # Calculate slopes
-    slopes = torch.zeros_like(nodal_values)  # Keep the same shape as nodal_values
+    slopes = torch.zeros_like(fn_values)  # Keep the same shape as nodal_values
     slopes[:, 1:] = delta_f / delta_t
 
     # Handle s1 = s2 condition
@@ -38,18 +38,21 @@ def project_slopes_vectorized(nodal_values, knot_positions, smin, smax):
     clipped_slopes = torch.clamp(slopes, smin, smax)
 
     # Calculate new nodal values
-    new_nodal_values = torch.zeros_like(nodal_values)
-    new_nodal_values[:, 0] = nodal_values[:, 0]  # Set the first nodal value as it is
+    new_fn_values = torch.zeros_like(fn_values)
+    new_fn_values[:, 0] = fn_values[:, 0]  # Set the first nodal value as it is
 
     # Compute cumulative sum for the adjustment using the clipped slopes
     for i in range(1, N):
-        new_nodal_values[:, i] = new_nodal_values[:, i - 1] + clipped_slopes[:, i - 1] * (knot_positions[:, i] - knot_positions[:, i - 1])
+        new_fn_values[:, i] = new_fn_values[:, i - 1] + clipped_slopes[:, i - 1] * (knot_positions[:, i] - knot_positions[:, i - 1])
 
     # Adjust to preserve the mean
-    mean_adjustment = torch.mean(nodal_values) - torch.mean(new_nodal_values)
-    new_nodal_values += mean_adjustment
+    mean_adjustment = torch.mean(fn_values) - torch.mean(new_fn_values)
+    new_fn_values += mean_adjustment
 
-    return new_nodal_values
+    # print("new fn_values are:")
+    # print(new_fn_values)
+
+    return new_fn_values
 
 
 ### COMMENT: I DONT THINK WE NEED GRID AND SIZE AS AN ARGUMENT IN THIS FN 
@@ -114,7 +117,7 @@ class LinearSpline_Func(torch.autograd.Function):
         ### I THINK THE FOLLOWING WOULD BE THE CORRECT LEFT BASIS
         left_basis = (right_values - x_sq_and_transpose)/ (right_values - left_values)
         # print("left basis is:"); print(left_basis)
-        # right basis =  1-left_basis 
+        # right basis =  1-left_basis . so we dont need to calculate it explicitly
         # indices for coefficient vector:
         index_coeffs = left_indices + zero_knot_indexes.unsqueeze(1)
         # print(f"coefficient vector is:"); print(coefficients_vect)
@@ -230,9 +233,12 @@ class LinearSplineSlopeConstrained(ABC, nn.Module): ### changes mainly here!
         ### INITIALISE SPLINE COEFFICIENTS (NODAL VALUES, fn)
         # (maybe we might need to make some changes in the initialize_coeffs function as well. we will see)
         coefficients = initialize_coeffs(init, self.nodal_val_loc_tensor, self.grid, self.size)  # spline coefficients
+        
         # Need to vectorize coefficients to perform specific operations
         # size: (num_activations*size)
         self.coefficients_vect = nn.Parameter(coefficients.contiguous().view(-1))
+        # print("KNOTS POSITIONS ARE:"); print(self.nodal_val_loc_tensor)
+        # print("INITIALISED COEFFICIENTS ARE:"); print(self.coefficients_vect)
         self.scaling_coeffs_vect = nn.Parameter(torch.ones((1, self.num_activations, 1, 1)))
         # print(f" self.grid is:"); print(self.grid)
         # print(f"self.coefficient_vect shape is (before defining coeff_reshaped): {self.coefficients_vect.shape}")
@@ -269,7 +275,7 @@ class LinearSplineSlopeConstrained(ABC, nn.Module): ### changes mainly here!
     @property
     def slope_constrained_coefficients(self): # UPDATE: I HAVE TO CHANGE ITS NAME TO SOMETHING ELSE, LEAVING IT slope_constrained_coefficients FOR THE TIME BEING
         """Projection such that the slope is constrained in the range [smin, smax]"""
-        return project_slopes_vectorized(nodal_values=self.coefficients, 
+        return project_slopes_vectorized(fn_values=self.coefficients, 
                                         knot_positions=self.nodal_val_loc_tensor, 
                                         smin = self.smin, smax = self.smax)
     
@@ -338,14 +344,20 @@ class LinearSplineSlopeConstrained(ABC, nn.Module): ### changes mainly here!
         # grid = self.grid.to(self.coefficients_vect.device) 
         nodal_val_loc_tensor = self.nodal_val_loc_tensor.to(self.coefficients_vect.device)
         zero_knot_indexes = self.zero_knot_indexes.to(nodal_val_loc_tensor.device)
+        # print("in the forward function:")
+        # print("what im calling nodal_val_loc_tensor is:"); print(nodal_val_loc_tensor)
 
         x = x.mul(self.scaling_coeffs_vect)### refer to equation (14) in the paper (section 3.3.2 Scaling Parameter)
 
         if self.slope_constrained: ### THIS I NEED TO LOOK INTO! IM NOT ENTIRELY SURE ABOUT THIS!
+            # print(f"self.slope_constrained is: {self.slope_constrained}")
+            # print("hurrah I am here")
             output = LinearSpline_Func.apply(x, self.slope_constrained_coefficients_vect, nodal_val_loc_tensor, zero_knot_indexes, \
                                         self.size, self.even)
 
         else:
+            # print(f"self.slope_constrained is: {self.slope_constrained}")
+            # print("hurrah I am in the else part")
             output = LinearSpline_Func.apply(x, self.coefficients_vect, nodal_val_loc_tensor, zero_knot_indexes, \
                                         self.size, self.even)
 
@@ -367,7 +379,7 @@ class LinearSplineSlopeConstrained(ABC, nn.Module): ### changes mainly here!
         """ repr for print(model) """
 
         s = ('mode={mode}, num_activations={num_activations}, '
-             'init={init}, size={size}, grid={grid}, '
+             'init={init}, size(Num of nodes (ti))={size}, '# removed grid={grid} from here
              'slope_constrained={slope_constrained}.'
              )
 
