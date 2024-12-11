@@ -20,4 +20,8 @@ class LipschitzLinear(Linear):
         # print("debugging, lipschitz_weight's dtype is:", lipschitz_weight.dtype)
         # print("debugging, self.bias's dtype is:", self.bias.dtype)
         # print("debigging, x.dtype:",x.dtype)
+        # print(f"bias (when bias = 0 is): {self.bias}")
+        # print(f"lipschitz_weight.shape is: {lipschitz_weight.shape}")
+        # wt =torch.ones(1, x.shape[-1], device=x.device, dtype=x.dtype)# i wanna print something
         return F.linear(x.float(), lipschitz_weight, self.bias)
+        # return F.linear(x.float(), wt, self.bias)
