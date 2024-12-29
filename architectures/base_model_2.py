@@ -8,7 +8,7 @@ import math
 import numpy as np
 import torch.nn as nn
 from torch import Tensor
-from activations.linearspline import LinearSpline
+# from activations.linearspline import LinearSpline
 from activations.linearspline_slope_constraint import LinearSplineSlopeConstrained
 from activations.groupsort import GroupSort
 from activations.householder import HouseHolder
@@ -230,7 +230,7 @@ class BaseModel(nn.Module):
 
     ##########################################################################
     # linearspline: regularization and sparsification
-
+    
     def TV2(self):
         """
         Computes the sum of the TV(2) (second-order total-variation)
