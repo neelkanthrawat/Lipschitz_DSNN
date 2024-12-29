@@ -44,7 +44,7 @@ def project_slopes_vectorized(fn_values, knot_positions,
 
     # Compute cumulative sum for the adjustment using the clipped slopes
     for i in range(1, N):
-        new_fn_values[:, i] = new_fn_values[:, i - 1] + clipped_slopes[:, i - 1] * (knot_positions[:, i] - knot_positions[:, i - 1])
+        new_fn_values[:, i] = new_fn_values[:, i - 1] + clipped_slopes[:, i] * (knot_positions[:, i] - knot_positions[:, i - 1])
 
     # Adjust to preserve the mean
     mean_adjustment = torch.mean(fn_values) - torch.mean(new_fn_values)
@@ -61,6 +61,8 @@ def initialize_coeffs(init, nodal_val_loc_tensor, grid, size):
         
         if init == 'identity':
             coefficients = nodal_val_loc_tensor
+        elif init == "double":
+            coefficients = 2* nodal_val_loc_tensor
         elif init == 'zero':
             coefficients = torch.zeros(nodal_val_loc_tensor.shape)
         elif init == 'relu':
@@ -91,7 +93,6 @@ class LinearSpline_Func(torch.autograd.Function):
     def forward(ctx, x, coefficients_vect, nodal_val_loc_tensor, 
                 zero_knot_indexes, size, even
                 , want_grad_x=False):
-        print("im here. the function is being applied")
         
         ### Step 1: Find the index of the left and right term's posn/nodal point location
         nodal_val_loc_tensor = nodal_val_loc_tensor.contiguous()
@@ -108,8 +109,6 @@ class LinearSpline_Func(torch.autograd.Function):
         right_values = nodal_val_loc_tensor[activation_indices, left_indices+1]# Shape: [num_activations, batch_size]
 
         # Calculate the left basis
-        # left_basis = (x_sq_and_transpose - left_values) / (right_values - left_values)
-        ### I THINK THE FOLLOWING WOULD BE THE CORRECT LEFT BASIS
         left_basis = (right_values - x_sq_and_transpose)/ (right_values - left_values)
         # indices for coefficient vector:
         index_coeffs = left_indices + zero_knot_indexes.unsqueeze(1)
@@ -131,29 +130,25 @@ class LinearSpline_Func(torch.autograd.Function):
         return activation_output, grad_x_temp
 
     @staticmethod
-    def backward(ctx, grad_out):
+    def backward(ctx, grad_out, grad_x_temp_out):
 
         # ADDED "activation_indices" and "left_indices" in the code below
         fracs, coefficients_vect, indexes, nodal_val_loc_tensor,activation_indices, left_indices = ctx.saved_tensors
         # note: fracs is left basis
         # Calculate the gradients with respect to x
-        # grad_x represents the slope between the two coefficients
-        
-        # grad_x = (coefficients_vect[indexes + 1] - coefficients_vect[indexes]) / (nodal_val_loc_tensor[indexes + 1] - nodal_val_loc_tensor[indexes]) * grad_out
-        # HERE WE MADE CHANGES IN THE DENOMINATOR, I THINK NOW IT SHOULD NOT THROW ERROR
         grad_x = (coefficients_vect[indexes + 1] - coefficients_vect[indexes]) / (nodal_val_loc_tensor[activation_indices, left_indices+1] - nodal_val_loc_tensor[activation_indices, left_indices]) * grad_out
         # Next, add the gradients with respect to each coefficient
         grad_coefficients_vect = torch.zeros_like(coefficients_vect)
-        
         # left coefficients gradients
         grad_coefficients_vect.scatter_add_(0,
-                                            indexes.view(-1) + 1,
-                                            (fracs * grad_out).view(-1))
+                                            indexes.view(-1),
+                                            (fracs * grad_out).reshape(-1))
         # right coefficients gradients
-        grad_coefficients_vect.scatter_add_(0, indexes.view(-1),
-                                            ((1 - fracs) * grad_out).view(-1))
+        grad_coefficients_vect.scatter_add_(0, indexes.view(-1)+1,
+                                            ((1 - fracs) * grad_out).reshape(-1))
 
-        return grad_x, grad_coefficients_vect, None, None, None, None
+        # return grad_x, grad_coefficients_vect, None, None, None, None, None
+        return grad_x,grad_coefficients_vect, None, None, None, None
 
 class LinearSplineSlopeConstrained(ABC, nn.Module): ### changes mainly here!
     """
@@ -193,11 +188,13 @@ class LinearSplineSlopeConstrained(ABC, nn.Module): ### changes mainly here!
                 # Use provided grid_values, ensuring correct length
                 assert len(grid_values) == size, "grid_values length must match size"
                 self.nodal_val_loc_tensor = torch.tensor(grid_values).expand((num_activations, size))
+
             else:
                 # Generate a non-uniform grid by sampling random points within the range
                 random_grid = torch.rand(size) * (2 * range_) - range_  # Values within [-range_, range_]
                 random_grid, _ = torch.sort(random_grid)  # Sort to ensure monotonicity
                 self.nodal_val_loc_tensor = random_grid.expand((num_activations, size))
+                
 
             # Calculate differences for both provided and random non-uniform grids
             ### imma keep the name grid for now, but later, I will change it to diff_nodal_val_loc
@@ -221,26 +218,8 @@ class LinearSplineSlopeConstrained(ABC, nn.Module): ### changes mainly here!
         # Need to vectorize coefficients to perform specific operations
         # size: (num_activations*size)
         self.coefficients_vect = nn.Parameter(coefficients.contiguous().view(-1))
-        # print("KNOTS POSITIONS ARE:"); print(self.nodal_val_loc_tensor)
-        # print("INITIALISED COEFFICIENTS ARE:"); print(self.coefficients_vect)
-        self.scaling_coeffs_vect = nn.Parameter(torch.ones((1, self.num_activations, 1, 1)))
-        # print(f" self.grid is:"); print(self.grid)
-        # print(f"self.coefficient_vect shape is (before defining coeff_reshaped): {self.coefficients_vect.shape}")
-        # print("coefficients are:")
-        # print(coefficients)
-        ### SLOPES
-        # Reshape the coefficients vector back into a 2D tensor for calculations
-        coefficients_reshaped = self.coefficients_vect.view(self.num_activations, self.size)
-        
-        # Define slopes based on the reshaped coefficients and nodal_val_loc_tensor
-        delta_f = coefficients_reshaped[:, 1:] - coefficients_reshaped[:, :-1]
-        delta_t = self.nodal_val_loc_tensor[:, 1:] - self.nodal_val_loc_tensor[:, :-1]
-        slopes = torch.zeros((self.num_activations, self.size), device=self.coefficients_vect.device)
-        # Calculate slopes using the finite-difference formula, ensuring the boundary condition s1 = s2
-        slopes[:, 1:] = delta_f / delta_t
-        slopes[:, 0] = slopes[:, 1]  # Boundary condition (s1 = s2)
-        # Store slopes as a member of the class
-        # self.slopes = slopes  # Tensor of initial slopes. I am not using it anywhere. let;s comment it
+        print("initial nodal_val_locs:", self.nodal_val_loc_tensor)
+        print("initial fn values:", self.coefficients_vect)
         self.grad_x_temp = 0 # We need this for slope jacobian which in turn is needed in cal of loss (1d case)
 
 
@@ -298,9 +277,9 @@ class LinearSplineSlopeConstrained(ABC, nn.Module): ### changes mainly here!
         ref: Page 17 of the paper:
             "Controlled learning of Pointwise Non-linearities in Neural-Network-like architectures" by Unser et. al.
         """
-        get_slopes = self.slopes_contiguous()
+        get_slopes = self.slopes_contiguous(for_projected_coeffs=True)
         diff_slopes = get_slopes[1:] - get_slopes[:-1] 
-        print("diff_slope:"); print(diff_slopes)
+        # print("diff_slope:"); print(diff_slopes)
         return diff_slopes
 
     def reshape_forward(self, x):
@@ -356,23 +335,19 @@ class LinearSplineSlopeConstrained(ABC, nn.Module): ### changes mainly here!
         # print("in the forward function:")
         # print("what im calling nodal_val_loc_tensor is:"); print(nodal_val_loc_tensor)
 
-        x = x.mul(self.scaling_coeffs_vect)### refer to equation (14) in the paper (section 3.3.2 Scaling Parameter)
+        # x = x.mul(self.scaling_coeffs_vect)### refer to equation (14) in the paper (section 3.3.2 Scaling Parameter)
 
         if self.slope_constrained: ### THIS I NEED TO LOOK INTO! IM NOT ENTIRELY SURE ABOUT THIS!
-            print(f"self.slope_constrained is: {self.slope_constrained}")
-            print("slope is being constrained")
-            ## also change the self.slope to self.slope_new which are new constrained slopes
+            ## Do i need to change the self.slope to self.slope_new which are new constrained slopes
             # self.slopes = self.slopes_vector
             output, grad_x_temp = LinearSpline_Func.apply(x, self.slope_constrained_coefficients_vect, nodal_val_loc_tensor, zero_knot_indexes, \
                                         self.size, self.even)
 
         else:
-            # print(f"self.slope_constrained is: {self.slope_constrained}")
-            # print("hurrah I am in the else part")
             output, grad_x_temp = LinearSpline_Func.apply(x, self.coefficients_vect, nodal_val_loc_tensor, zero_knot_indexes, \
                                         self.size, self.even)
 
-        output = output.div(self.scaling_coeffs_vect) ### refer to equation (14) in the paper (section 3.3.2 Scaling Parameter) 
+        # output = output.div(self.scaling_coeffs_vect) ### refer to equation (14) in the paper (section 3.3.2 Scaling Parameter) 
         output = self.reshape_back(output, input_size)
         self.grad_x_temp = grad_x_temp
 
