@@ -63,6 +63,8 @@ def initialize_coeffs(init, nodal_val_loc_tensor, grid, size):
             coefficients = nodal_val_loc_tensor
         elif init == "double":
             coefficients = 2* nodal_val_loc_tensor
+        elif init == "random": 
+            coefficients = 1.1*torch.rand_like(nodal_val_loc_tensor) + nodal_val_loc_tensor
         elif init == 'zero':
             coefficients = torch.zeros(nodal_val_loc_tensor.shape)
         elif init == 'relu':
@@ -75,11 +77,11 @@ def initialize_coeffs(init, nodal_val_loc_tensor, grid, size):
             # identity. This is similar to maxmin because max(x1, x2) = (x1 + x2)/2 + |x1 - x2|/2 
             # and min(x1, x2) = (x1 + x2)/2 - |x1 - x2|/2
             coefficients = torch.zeros(nodal_val_loc_tensor.shape)
-            coefficients[::2, :] = 2* (nodal_val_loc_tensor[::2, :]).abs()
-            coefficients[1::2, :] = 3* nodal_val_loc_tensor[1::2, :]
+            coefficients[::2, :] =  (nodal_val_loc_tensor[::2, :]).abs()
+            coefficients[1::2, :] =  nodal_val_loc_tensor[1::2, :]
         
         else:
-            raise ValueError('init should be in [identity, relu, absolute_value, maxmin, max_tv].')
+            raise ValueError('init should be in [identity,zero, relu, absolute_value, maxmin, max_tv].')
         return coefficients
 
 ## TO INCORPORATE NON-UNIFORM CASE, WE WOULD HAVE TO MAKE SOME CHANGES HERE AS WELL!
@@ -94,6 +96,7 @@ class LinearSpline_Func(torch.autograd.Function):
                 zero_knot_indexes, size, even
                 , want_grad_x=False):
         
+        # print("x is:"); print(x)
         ### Step 1: Find the index of the left and right term's posn/nodal point location
         nodal_val_loc_tensor = nodal_val_loc_tensor.contiguous()
         x_sq_and_transpose = x.squeeze(-1).squeeze(-1).transpose(0, 1).contiguous()# squeezed and transposed
@@ -107,11 +110,15 @@ class LinearSpline_Func(torch.autograd.Function):
         # calculating left and right nodal points (t_j, t_{j+1})
         left_values =nodal_val_loc_tensor[activation_indices, left_indices]# Shape: [num_activations, batch_size]
         right_values = nodal_val_loc_tensor[activation_indices, left_indices+1]# Shape: [num_activations, batch_size]
-
+        # print("left_values:"); print(left_values)
+        # print("right_values:"); print(right_values)
         # Calculate the left basis
         left_basis = (right_values - x_sq_and_transpose)/ (right_values - left_values)
+        # print("left basis is:"); print(left_basis)
         # indices for coefficient vector:
         index_coeffs = left_indices + zero_knot_indexes.unsqueeze(1)
+        # print("coeff with left basis"); print(coefficients_vect[index_coeffs])
+        # print("coeff with right basis"); print(coefficients_vect[index_coeffs+1])
 
         ### Step 3: Compute activation output with 2 coefficients and corresponding basis
         activation_output = coefficients_vect[index_coeffs] * left_basis + \
@@ -119,6 +126,7 @@ class LinearSpline_Func(torch.autograd.Function):
 
         # reshape the output:
         activation_output = activation_output.transpose(0,1).view(x.shape)
+        # print("activation_output:"); print(activation_output)
 
         ### Step 4: save for backward propagation
         ctx.save_for_backward(left_basis, coefficients_vect, index_coeffs, 
@@ -148,7 +156,9 @@ class LinearSpline_Func(torch.autograd.Function):
                                             ((1 - fracs) * grad_out).reshape(-1))
 
         # return grad_x, grad_coefficients_vect, None, None, None, None, None
-        return grad_x,grad_coefficients_vect, None, None, None, None
+        return None,grad_coefficients_vect, None, None, None, None
+        # return grad_x,grad_coefficients_vect, None, None, None, None
+
 
 class LinearSplineSlopeConstrained(ABC, nn.Module): ### changes mainly here!
     """
@@ -340,12 +350,15 @@ class LinearSplineSlopeConstrained(ABC, nn.Module): ### changes mainly here!
         if self.slope_constrained: ### THIS I NEED TO LOOK INTO! IM NOT ENTIRELY SURE ABOUT THIS!
             ## Do i need to change the self.slope to self.slope_new which are new constrained slopes
             # self.slopes = self.slopes_vector
-            output, grad_x_temp = LinearSpline_Func.apply(x, self.slope_constrained_coefficients_vect, nodal_val_loc_tensor, zero_knot_indexes, \
-                                        self.size, self.even)
+            output, grad_x_temp = LinearSpline_Func.apply(x, 
+                                    self.slope_constrained_coefficients_vect, nodal_val_loc_tensor,
+                                    zero_knot_indexes, \
+                                    self.size, self.even)
 
         else:
-            output, grad_x_temp = LinearSpline_Func.apply(x, self.coefficients_vect, nodal_val_loc_tensor, zero_knot_indexes, \
-                                        self.size, self.even)
+            output, grad_x_temp = LinearSpline_Func.apply(x, self.coefficients_vect, 
+                                    nodal_val_loc_tensor, zero_knot_indexes, \
+                                    self.size, self.even)
 
         # output = output.div(self.scaling_coeffs_vect) ### refer to equation (14) in the paper (section 3.3.2 Scaling Parameter) 
         output = self.reshape_back(output, input_size)
