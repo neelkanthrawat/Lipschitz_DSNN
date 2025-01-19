@@ -64,7 +64,7 @@ def initialize_coeffs(init, nodal_val_loc_tensor, grid, size):
         elif init == "double":
             coefficients = 2* nodal_val_loc_tensor
         elif init == "random": 
-            coefficients = 1.5*torch.rand_like(nodal_val_loc_tensor) + nodal_val_loc_tensor
+            coefficients = 1.1*torch.rand_like(nodal_val_loc_tensor) + nodal_val_loc_tensor
             #print('shape of nodal vector is:');print(nodal_val_loc_tensor.shape)
             # coefficients = torch.zeros_like(nodal_val_loc_tensor)  # Start with all zeros
             # coefficients[:,0] = nodal_val_loc_tensor[:,0]       # First row as identity
