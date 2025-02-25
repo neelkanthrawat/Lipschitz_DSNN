@@ -55,12 +55,14 @@ def project_slopes_vectorized(fn_values, knot_positions,
 
 ### COMMENT: I DONT THINK WE NEED GRID AND SIZE AS AN ARGUMENT IN THIS FN 
 # AS WE ARE NOT USING THEM ANYWHHERE 
-def initialize_coeffs(init, nodal_val_loc_tensor, grid, size):
+def initialize_coeffs(init, nodal_val_loc_tensor, grid, size, manual_init_tensor=None):
         """The coefficients are initialized with the value of the activation
         # at each knot (c[k] = f[k], since B1 splines are interpolators)."""
         
         if init == 'identity':
             coefficients = nodal_val_loc_tensor
+        elif init == 'manual' and manual_init_tensor.all()!=None:
+            coefficients = manual_init_tensor
         elif init == "double":
             coefficients = 2* nodal_val_loc_tensor
         elif init == "random": 
@@ -183,7 +185,7 @@ class LinearSplineSlopeConstrained(ABC, nn.Module): ### changes mainly here!
     """
 
     def __init__(self, mode, num_activations, size, range_, init,smin, smax,
-                slope_constrained, grid_values =None,
+                slope_constrained, grid_values =None, manual_init_fn_tensor=None,
                 uniform_grid = False, **kwargs):
 
         if mode not in ['conv', 'fc']:
@@ -226,10 +228,14 @@ class LinearSplineSlopeConstrained(ABC, nn.Module): ### changes mainly here!
         self.smax = smax
         self.init_zero_knot_indexes()
         self.slope_constrained = slope_constrained # do we need it this time?
+        self.manual_init_tensor = manual_init_fn_tensor
 
         ### INITIALISE SPLINE COEFFICIENTS (NODAL VALUES, fn)
-        # (maybe we might need to make some changes in the initialize_coeffs function as well. we will see)
-        coefficients = initialize_coeffs(init, self.nodal_val_loc_tensor, self.grid, self.size)  # spline coefficients
+        if self.init == 'manual':
+            coefficients = initialize_coeffs(init, self.nodal_val_loc_tensor, self.grid, self.size, 
+                                        manual_init_tensor=self.manual_init_tensor)
+        else:    
+            coefficients = initialize_coeffs(init, self.nodal_val_loc_tensor, self.grid, self.size)  # spline coefficients
         
         # Need to vectorize coefficients to perform specific operations
         # size: (num_activations*size)
