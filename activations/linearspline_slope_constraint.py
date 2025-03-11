@@ -185,7 +185,7 @@ class LinearSplineSlopeConstrained(ABC, nn.Module): ### changes mainly here!
     """
 
     def __init__(self, mode, num_activations, size, range_, init,smin, smax,
-                slope_constrained, grid_values =None, manual_init_fn_tensor=None,
+                slope_constrained, grid_values =None, manual_init_fn_tensor=None, print_initialisation=0,
                 uniform_grid = False, **kwargs):
 
         if mode not in ['conv', 'fc']:
@@ -240,8 +240,9 @@ class LinearSplineSlopeConstrained(ABC, nn.Module): ### changes mainly here!
         # Need to vectorize coefficients to perform specific operations
         # size: (num_activations*size)
         self.coefficients_vect = nn.Parameter(coefficients.contiguous().view(-1))
-        print("initial nodal_val_locs:", self.nodal_val_loc_tensor)
-        print("initial fn values:", self.coefficients_vect)
+        if print_initialisation:
+            print("initial nodal_val_locs:", self.nodal_val_loc_tensor)
+            print("initial fn values:", self.coefficients_vect)
         self.grad_x_temp = 0 # We need this for slope jacobian which in turn is needed in cal of loss (1d case)
 
 
